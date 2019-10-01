@@ -1,0 +1,303 @@
+---
+title: "Milestone report: Exploratory data analysis of texts"
+author: "Olga Larina"
+date: "09/18/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "", message = FALSE)
+```
+
+## Introduction
+
+This milestone report is the first part of the Data Science specialization
+capstone project. The motivation for this report is to:
+
+1. Demonstrate the data downloading and loading into R;
+2. Create a basic report of summary statistics about the data sets:
+  * Count number of lines and words in the files;
+  * Count frequencies of words, 2-grams and 3-grams;
+  * Answer the question: "How many unique words do you need in a frequency sorted
+  dictionary to cover 50% of all word instances in the language? 90%?"
+3. Report any interesting findings;
+4. Get feedback on plans for creating a prediction algorithm and Shiny app.
+
+The data files are unloadings from twitter, blogs and news - a lot of twitts in
+the first file and so on.
+
+Code chuncks can be skiped by a non data scientist - look at the outputs and plots in this case.
+
+## Loading the data
+
+So, I begin with loading the data to "data" folder in my working directory. 
+
+```{r download}
+if (!dir.exists("./data"))
+  dir.create("./data")
+if (!dir.exists("./data/final"))
+{
+  url = "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+  download.file(url, destfile = "./data/Coursera-SwiftKey.zip", method = "curl")
+  unzip(zipfile = "./data/Coursera-SwiftKey.zip", exdir = "./data")
+}
+```
+Now, I would like to know how many lines are in the files.
+```{r lines_count, cache=TRUE, message=FALSE, warning=FALSE}
+length(readLines("data/final/en_US/en_US.twitter.txt"))
+length(readLines("data/final/en_US/en_US.blogs.txt"))
+length(readLines("data/final/en_US/en_US.news.txt"))
+```
+So, file with twitts has the largest number of lines. What about number of words?
+I will use function wordcount() from "ngram" package.
+```{r words_count, cache=TRUE, warning=FALSE}
+library(ngram)
+wordcount(readLines("data/final/en_US/en_US.twitter.txt"))
+wordcount(readLines("data/final/en_US/en_US.blogs.txt"))
+wordcount(readLines("data/final/en_US/en_US.news.txt"))
+```
+Over 30 millions of words in every file. It's intresting that the file with blogs
+has the smallest number of lines and the largest number of words. It's seems to
+be logical, because blogs are usually longer than twitts.
+
+Now I should load the data in R, but there are too much of data. I'm going to load
+1% of lines from each source.
+```{r read_random_lines, cache=TRUE, message=FALSE, warning=FALSE}
+library(readtext)
+library(stringi)
+set.seed(8845)
+sample_size = 0.1
+n_lines = stri_split_lines1(readtext("data/final/en_US/en_US.news.txt"))
+n_lines = sample(n_lines, size=length(n_lines)*sample_size)
+b_lines = stri_split_lines1(readtext("data/final/en_US/en_US.blogs.txt"))
+b_lines = sample(b_lines, size=length(b_lines)*sample_size)
+t_lines = stri_split_lines1(readtext("data/final/en_US/en_US.twitter.txt"))
+t_lines = sample(t_lines, size=length(t_lines)*sample_size)
+```
+This is how the data looks like:
+```{r data}
+head(t_lines,3)
+```
+I will store all my data in one data table - "data".
+```{r all_data, message=FALSE}
+library(dplyr)
+library(data.table)
+t_data = data.table(source = "twitter", text = t_lines)
+b_data = data.table(source = "blogs", text = b_lines)
+n_data = data.table(source = "news", text = n_lines)
+data = bind_rows(t_data, b_data, n_data)
+```
+
+## Cleaning the data
+
+First of all, I would like to:
+
+1. Replace internet slang with it's meaning;
+2. Change all letters to lowercase because words in lexicons are usually in lowercase;
+3. Delete profanity from my data. I will use lexicons to do it. Some lexicons
+contains special signs that needs to be shielded first.
+```{r profanity, cache=TRUE}
+library(lexicon)
+data(profanity_alvarez)
+data(profanity_arr_bad)
+data(profanity_banned)
+data(profanity_racist)
+data(profanity_zac_anger)
+
+pa = gsub("\\*", "", profanity_alvarez)
+pa = gsub("\\$", "\\\\$", pa)
+pa = gsub("\\+", "\\\\+", pa)
+pa = gsub("\\!", "\\\\!", pa)
+pa = gsub("\\.", "\\\\.", pa)
+pa = gsub("\\-", "\\\\-", pa)
+pa = gsub("\\;", "\\\\;", pa)
+pa = gsub("\\(", "\\\\(", pa)
+
+pz = gsub("\\*", "", profanity_zac_anger)
+pz = gsub("\\$", "\\\\$", pz)
+pz = gsub("\\+", "\\\\+", pz)
+pz = gsub("\\!", "\\\\!", pz)
+pz = gsub("\\.", "\\\\.", pz)
+pz = gsub("\\-", "\\\\-", pz)
+pz = gsub("\\;", "\\\\;", pz)
+pz = gsub("\\(", "\\\\(", pz)
+
+library(tm)
+library(dplyr)
+library(textclean)
+data$text = data$text %>%
+  replace_internet_slang() %>%
+  tolower() %>%
+  removeWords(profanity_arr_bad) %>%
+  removeWords(profanity_banned) %>%
+  removeWords(profanity_racist) %>%
+  removeWords(pa) %>%
+  removeWords(pz)
+```
+
+More text cleaning:
+
+1. I will fix some common contractions "I'm" to "I am";
+1. I replace symbols with words: $ to "dollar";
+2. Remove stopwords (they are frequent but provide little information, as I, me, my);
+3. Remove everything except words (symbols like "-", numbers).
+```{r clean, cache = TRUE}
+library(tm)
+library(stringr)
+library(tidytext)
+data$text = data$text %>%
+  replace_contraction() %>%
+  replace_symbol() %>%
+  removeWords(stop_words[['word']]) %>%
+  str_replace_all("[^a-zA-Z\\s]", "")
+head(data, 3)
+```
+
+## Exploring the words
+
+It's time to get some statistics - I will tokenize text on words and count word's
+frequency.
+```{r word_tokens, cache = TRUE}
+word_data = data %>%
+  unnest_tokens(word, text) %>%
+  group_by(source, word) %>%
+  summarise(num_words = n()) %>%
+  arrange(desc(num_words))
+head(word_data)
+```
+
+Let's plot it!
+```{r word_plot, cache = TRUE}
+library(ggplot2)
+top_word_data = word_data %>%
+  slice(seq_len(10)) %>%
+  ungroup()%>%
+  arrange(source, num_words)%>%
+  mutate(row = row_number()) 
+top_word_data %>%
+  ggplot(aes(row, num_words, fill = source)) +
+  geom_col(show.legend = F) + 
+  facet_wrap(~source, scales = "free") + 
+  xlab(NULL) +
+  ylab("Number of words") +
+  scale_x_continuous(  # This handles replacement of row 
+    breaks = top_word_data$row, # notice need to reuse data frame
+    labels = top_word_data$word)+
+  coord_flip()
+```
+
+Some top words are the same - like time, while the others are unique for the type
+of the text - like rt.
+
+Another question that might be asked: "How many unique words do you need in a
+frequency sorted dictionary to cover 50% of all word instances in the language?
+90?" Let's countin a simple loop:
+
+```{r word_analysis, cache = TRUE}
+library(tidytext)
+all_words = data %>%
+  unnest_tokens(word, text)
+n_words = nrow(all_words)
+all_words = all_words %>%
+  count(word, sort= TRUE)
+i = 1
+sum = 0
+while (sum < n_words*0.5)
+{
+  sum = sum + all_words$n[i]
+  i = i+1
+}
+paste(i - 1, "words cover", sum, "word instances, which is 50% of language")
+while (sum < n_words*0.9)
+{
+  sum = sum + all_words$n[i]
+  i = i+1
+}
+paste(i - 1, "words cover", sum, "word instances, which is 90% of language")
+```
+And we did not consider stop words, only meaningfull words!
+
+## Exploring frequencies of 2-grams and 3-grams
+
+Now let's move to 2-grams and 3-grams. Package "tidytext" and it's fnction unnest_tokens()
+can be used for it as well.
+```{r 2-grams, cache = TRUE}
+bigram_data = data %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 2) %>%
+  group_by(source, bigram) %>%
+  summarise(num_bigrams = n()) %>%
+  arrange(desc(num_bigrams))
+head(bigram_data)
+```
+I will make plots with bigrams, just like with words.
+```{r 2-grams plot, echo = FALSE, cache = TRUE}
+top_bigram_data = bigram_data %>%
+  slice(seq_len(10)) %>%
+  ungroup() %>%
+  arrange(source, num_bigrams)%>%
+  mutate(row = row_number()) 
+top_bigram_data %>%
+  ggplot(aes(row, num_bigrams, fill = source)) +
+  geom_col(show.legend = F) + 
+  facet_wrap(~source, scales = "free") + 
+  xlab(NULL) +
+  ylab("Number of bigrams") +
+  scale_x_continuous(  # This handles replacement of row 
+    breaks = top_bigram_data$row, # notice need to reuse data frame
+    labels = top_bigram_data$bigram)+
+  coord_flip()
+```
+
+Now we can see that popular pairs of words are absolutly different for different
+tupes of texts - and it seems to be logical.
+
+Now, to the trigrams. Work with trigrams
+is identical to work with bigrams, so I will just show the results.
+```{r 3-grams, echo=FALSE, cache = TRUE}
+trigram_data = data %>%
+  unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+  group_by(source, trigram) %>%
+  summarise(num_trigrams = n()) %>%
+  arrange(desc(num_trigrams))
+head(trigram_data)
+```
+```{r 3-grams plot, echo = FALSE, cache = TRUE}
+top_trigram_data = trigram_data %>%
+  slice(seq_len(10)) %>%
+  ungroup() %>%
+  arrange(source, num_trigrams)%>%
+  mutate(row = row_number()) 
+top_trigram_data %>%
+  ggplot(aes(row, num_trigrams, fill = source)) +
+  geom_col(show.legend = F) + 
+  facet_wrap(~source, scales = "free") + 
+  xlab(NULL) +
+  ylab("Number of trigrams") +
+  scale_x_continuous(  # This handles replacement of row 
+    breaks = top_trigram_data$row, # notice need to reuse data frame
+    labels = top_trigram_data$trigram)+
+  coord_flip()
+```
+
+It is interesting to note that news tend to use the same 2-grams and 3-grams
+often enough while twitter repeats word combinations seldom - and it seems to be
+logical, there almost no rules in twitter!
+
+## Plans for creating a prediction algorithm
+So, this was an intresting research, that should help to build a prediction algorithm.
+To do this I am going to use cleaned data - words, 2-grams and 3-grams (and may be
+more) - to predict the next word that the user may have wanted to enter.
+
+
+
+
+
+
+
+
+
+
+
+
+
+

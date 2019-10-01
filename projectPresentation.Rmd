@@ -1,0 +1,74 @@
+---
+title: "Next word prediction based on n-grams"
+author: "Olga Larina"
+date: "09/27/2019"
+output: ioslides_presentation
+---
+<style>
+p, li { 
+  font-size: 18px;
+}
+h2 { 
+  line-height: 40px;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## Introduction and data cleaning
+This is Coursera's Data Science Capstone project. The goal of this project is to construct a small web-application. A user enters some text in the field and the application is trying to guess which word is the next. To do the prediction the application analyses a lot of real-world text (from twitter, news, and blogs), makes the model and then uses it to predict the next word in a sequence. For both train and test in total I get about 80% of data available from the project task.
+
+### Data cleaning
+Before we analyze the text we should clean it from:
+
+1. Profanity. I use package "lexicon" which contains a lot of dictionaries
+including profanity dictionaries;
+2. Numbers, punctuation, symbols - we are going to analyze only English words. Package "quanteda"
+cleans from numbers, punctuation, symbols, hyphens, urls;
+3. Stopwords - they are frequent but provide little information, as "I", "me", "my". Package "stopwords" contains stopwords from different languages.
+
+
+## How does the model works?
+Analyzing a text begins with text tokenization. We need to split up the text into
+tokens - parts. I divided the text into 3 types of tokens: word, 2 words, and 3 words. A simple
+model can be like this: look for 3-grams, that begin with entered words. If it is
+found - great, we get the prediction. If nothing is found - look for 2-grams, that
+begins with the last entered word. If nothing is found again - go to the words and take the most popular.
+
+The problem with this model is that we can never get all possible n-grams in sample
+data. There are different methods to improve the model, I used [Katz's back-off model](https://en.wikipedia.org/wiki/Katz%27s_back-off_model)
+and [Good–Turing frequency estimation](https://en.wikipedia.org/wiki/Good%E2%80%93Turing_frequency_estimation) for model smoothing. Katz's model reduces the probability
+of observed n-grams in favor of unobserved n-grams, Good-Turing helps to set the
+coefficients. It's also worth mentioning that we don't reduce high probabilities and consider
+them reliable, we reduce only small probabilities.
+
+### RAM and runtime
+
+The most expensive (RAM and runtime) operations are data cleaning and tokenization. After that, I
+group tokens and count their frequencies that reduce data.table a lot (I also cut
+tokens with a frequency less than 5, they are unreliable, Katz's back-off will take into account
+unobserved n-grams later). First, I tried tidytext for these expensive operations, 
+but it runs very long. Quanteda is about 5 times faster on my data and on my computer.
+
+## Performance and accuracy of prediction algorithm
+The model works fast enough due to reduced frequency tables and due to data.table itself.
+On my computer: 0.4 - 0.7 seconds to make a prediction. Accuracy can be improved, ways are
+obvious, but I think that they are out of the project scope.
+
+Steps that can be done in the future to improve accuracy:
+
+1. Consider context which can play significant role and influence word choice;
+2. Consider stopwords to be able to predict not only meaningful words but stopwords too;
+3. Consider beginning and ending of sentences.
+
+## Application
+
+The resulting web-page is available [here](https://olarinav.shinyapps.io/nextword/). Or you
+can try it right in this presentation. Just enter your phrase!
+
+```{r screenshot.opts = list(delay = 5)}
+knitr::include_url("https://olarinav.shinyapps.io/nextword/", height = "400px")
+```
+
